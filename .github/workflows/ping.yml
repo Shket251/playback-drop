@@ -9,5 +9,11 @@ jobs:
         env:
           IG_TOKEN: ${{ secrets.IG_TOKEN }}
         run: |
-          curl -s -m 30 "https://graph.instagram.com/v23.0/me?fields=username,account_type&access_token=$IG_TOKEN" -o out.json -w 'http=%{http_code} time=%{time_total}\n'
-          python3 -c "import json;d=json.load(open('out.json'));print('ОТВЕТ:', json.dumps(d, ensure_ascii=False))"
+          curl -s -m 30 "https://graph.instagram.com/v23.0/me?fields=username,account_type&access_token=$IG_TOKEN" -o out.json -w 'meta http=%{http_code}\n' || true
+          cat out.json; echo
+      - name: reach our own site from abroad
+        run: |
+          for u in /app /privacy /terms /tiktoktI7T8cWbUpdt8NaXzQ3rPbsGDcaZevK7.txt; do
+            curl -s -m 25 -o body.txt -w "$u -> %{http_code} за %{time_total}s\n" "https://93-95-97-85.nip.io$u" || echo "$u -> НЕ ДОСТУЧАЛИСЬ"
+          done
+          echo "--- содержимое файла проверки ---"; cat body.txt

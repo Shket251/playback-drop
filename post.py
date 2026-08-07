@@ -135,8 +135,46 @@ def run_once(queue: dict, posted: dict, env: dict) -> dict:
         print(f"✓ {clip} -> Reels {mid}", flush=True)
         fresh[clip] = {"id": mid, "at": stamp, "account": str(row.get("account") or ""),
                        "platform": "Reels"}
+        # Пост уже в ленте. Что бы ни случилось с уборкой дальше, отметка о нём
+        # должна уцелеть: потеряв её, следующая смена зальёт тот же клип второй раз.
+        try:
+            drop_release(str(row.get("tag") or ""), env)
+        except Exception as exc:                            # noqa: BLE001
+            print(f"! уборка раздачи сорвалась: {exc}", flush=True)
         break
     return fresh
+
+
+def drop_release(tag: str, env: dict) -> bool:
+    """Убрать раздачу опубликованного клипа. Возвращает, удалось ли.
+
+    Раньше это делал домашний ПК, когда забирал отметки, — то есть копии
+    опубликованных клипов лежали в открытом репозитории ровно столько, сколько
+    компьютер был выключен. Смысл переезда в облако в том и был, что он может
+    не включаться неделями, так что убирать за собой должна сама смена.
+    """
+    repo, token = env.get("GITHUB_REPOSITORY") or "", env.get("GITHUB_TOKEN") or ""
+    if not (tag and repo and token):
+        return False
+    head = {"Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json"}
+
+    def _req(url: str, method: str = "GET"):
+        req = urllib.request.Request(url, method=method, headers=head)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body) if body.strip() else {}
+
+    try:
+        rel = _req(f"https://api.github.com/repos/{repo}/releases/tags/{tag}")
+        _req(f"https://api.github.com/repos/{repo}/releases/{rel['id']}", "DELETE")
+        _req(f"https://api.github.com/repos/{repo}/git/refs/tags/{tag}", "DELETE")
+    except Exception as exc:                                # noqa: BLE001
+        # Не смертельно: клип уже в ленте, а хвост подберёт домашний `cloud pull`.
+        print(f"! раздачу {tag} убрать не вышло: {exc}", flush=True)
+        return False
+    print(f"  раздача {tag} убрана", flush=True)
+    return True
 
 
 def refresh(token: str) -> tuple[str, int]:

@@ -17,7 +17,7 @@ on:
 permissions:
   contents: write             # смена дописывает posted.json в этот же репозиторий
 
-concurrency: postinding       # две смены разом подрались бы за один и тот же файл
+concurrency: posting          # две смены разом подрались бы за один и тот же файл
 
 jobs:
   post:
@@ -43,9 +43,15 @@ jobs:
             git pull --rebase --autostash && git push
           fi
 
+      # Проверка «есть ли ключ» живёт внутри шага, а не в `if`: контекст secrets
+      # в условиях шага недоступен, и весь файл из-за этого не принимается вовсе.
       - name: Продлить маркер доступа
-        if: ${{ secrets.GH_PAT != '' }}
         env:
           IG_TOKEN: ${{ secrets.IG_TOKEN }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: python3 post.py --refresh
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "нет секрета GH_PAT — маркер не продлевается, он умрёт через 60 дней"
+            exit 0
+          fi
+          python3 post.py --refresh

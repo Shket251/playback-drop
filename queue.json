@@ -8,7 +8,8 @@
    "ig_id": "17841411354515192",
    "token_secret": "IG_TOKEN",
    "origin": "auto",
-   "score": 78
+   "score": 78,
+   "tries": 1
   },
   {
    "clip": "drops_season_4_rank_1_redsec_gri_4_3.mp4",
@@ -18,7 +19,8 @@
    "ig_id": "17841411354515192",
    "token_secret": "IG_TOKEN",
    "origin": "auto",
-   "score": 78
+   "score": 78,
+   "tries": 1
   },
   {
    "clip": "drops_season_4_rank_1_redsec_gri_1_3.mp4",
@@ -28,7 +30,8 @@
    "ig_id": "17841411354515192",
    "token_secret": "IG_TOKEN",
    "origin": "auto",
-   "score": 75
+   "score": 75,
+   "tries": 1
   },
   {
    "clip": "drops_season_4_rank_1_redsec_gri_5.mp4",
@@ -38,7 +41,8 @@
    "ig_id": "17841411354515192",
    "token_secret": "IG_TOKEN",
    "origin": "auto",
-   "score": 55
+   "score": 55,
+   "tries": 0
   }
  ]
 }

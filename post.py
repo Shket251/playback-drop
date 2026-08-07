@@ -33,6 +33,13 @@ API = "https://graph.instagram.com/v23.0"
 WAIT_TRIES = 20
 WAIT_DELAY = 15.0
 TRIES = 3           # столько клипов подряд пробуем, если верхние падают
+SHIFT = "!смена"    # ключ для беды, которая не про клип (именем файла быть не может)
+
+# Беды, в которых клип не виноват: маркер, права, блокировка приложения, лимиты.
+# Их надо отличать от «этот файл не скачался», иначе одна блокировка Meta за
+# три запуска пометит битыми три хороших клипа и выжжет буфер до дна.
+COMMON = ("api access blocked", "access token", "session has been invalidated",
+          "rate limit", "application request limit", "permission")
 
 
 def _call(url: str, params: dict, *, post: bool = False, timeout: float = 60.0) -> dict:
@@ -110,14 +117,19 @@ def run_once(queue: dict, posted: dict, env: dict) -> dict:
         stamp = time.strftime("%Y-%m-%d %H:%M", time.gmtime())
         token = env.get(str(row.get("token_secret") or "IG_TOKEN") or "IG_TOKEN")
         if not token:
-            fresh[clip] = {"error": f"в секретах репозитория нет "
-                                    f"{row.get('token_secret') or 'IG_TOKEN'}", "at": stamp}
-            break                       # следующий клип упрётся в то же самое
+            # Тоже беда не про клип: следующий упрётся в ровно то же самое.
+            fresh[SHIFT] = {"error": f"в секретах репозитория нет "
+                                     f"{row.get('token_secret') or 'IG_TOKEN'}", "at": stamp}
+            break
         try:
             mid = publish_reel(str(row.get("url") or ""), str(row.get("caption") or ""),
                                str(row.get("ig_id") or ""), token)
         except Exception as exc:                            # noqa: BLE001
             print(f"× {clip}: {exc}", flush=True)
+            if any(mark in str(exc).lower() for mark in COMMON):
+                # Клип ни при чём — дальше пойдёт то же самое. Очередь не трогаем.
+                fresh[SHIFT] = {"error": str(exc)[:300], "at": stamp, "clip": clip}
+                break
             fresh[clip] = {"error": str(exc)[:300], "at": stamp}
             continue
         print(f"✓ {clip} -> Reels {mid}", flush=True)

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -42,6 +43,17 @@ COMMON = ("api access blocked", "access token", "session has been invalidated",
           "rate limit", "application request limit", "permission")
 
 
+class NotTheClip(RuntimeError):
+    """Беда не про клип: сеть раннера, маркер, права, лимиты, поломка на стороне Meta.
+
+    Раньше сюда попадали только текстовые ответы Instagram из `COMMON`, а обрыв связи
+    самого раннера (`URLError`, таймаут, DNS, 5xx) до этой проверки не доходил вовсе —
+    он летел как обычная ошибка и записывался В ВИНУ КЛИПУ. Очередь отсортирована по
+    силе, попыток за смену три: один обрыв связи помечал битыми три лучших клипа
+    подряд, а после второго такого эпизода они вычёркивались навсегда.
+    """
+
+
 def _call(url: str, params: dict, *, post: bool = False, timeout: float = 60.0) -> dict:
     data = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(url + ("" if post else "?" + data.decode()),
@@ -56,7 +68,11 @@ def _call(url: str, params: dict, *, post: bool = False, timeout: float = 60.0) 
             msg = json.loads(raw)["error"]["message"]
         except Exception:                                  # noqa: BLE001
             msg = raw[:300] or str(exc)
+        if exc.code >= 500:                # поломка на их стороне — клип ни при чём
+            raise NotTheClip(f"Instagram отвечает {exc.code}: {msg}") from None
         raise RuntimeError(f"Instagram: {msg}") from None
+    except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as exc:
+        raise NotTheClip(f"сеть раннера: {exc}") from None
 
 
 def publish_reel(url: str, caption: str, ig_id: str, token: str,
@@ -87,6 +103,30 @@ def publish_reel(url: str, caption: str, ig_id: str, token: str,
     if not mid:
         raise RuntimeError(f"не вернулся id поста: {done}")
     return mid
+
+
+def already_posted(ig_id: str, token: str, caption: str) -> str:
+    """id поста с такой же подписью среди последних, иначе "".
+
+    Между `media_publish` и получением ответа есть окно: обрыв связи ровно в нём
+    оставляет пост В ЛЕНТЕ, а нам возвращает ошибку. Клип считается неопубликованным
+    и на следующей смене уезжает ВТОРЫМ разом — с той же подписью, в тот же аккаунт.
+    Спросить аккаунт дешевле, чем извиняться за дубль.
+
+    Сверяем по подписи: она у каждого клипа своя и уже лежит в записи очереди.
+    """
+    head = (caption or "").strip()[:80]
+    if not head:
+        return ""
+    try:
+        got = _call(f"{API}/{ig_id}/media",
+                    {"fields": "id,caption", "limit": "10", "access_token": token})
+    except Exception:                                       # noqa: BLE001
+        return ""            # не смогли спросить — молчим, дубль дешевле простоя
+    for item in got.get("data") or []:
+        if str(item.get("caption") or "").strip()[:80] == head:
+            return str(item.get("id") or "")
+    return ""
 
 
 def next_up(queue: dict, posted: dict) -> tuple[dict | None, int]:
@@ -126,7 +166,17 @@ def run_once(queue: dict, posted: dict, env: dict) -> dict:
                                str(row.get("ig_id") or ""), token)
         except Exception as exc:                            # noqa: BLE001
             print(f"× {clip}: {exc}", flush=True)
-            if any(mark in str(exc).lower() for mark in COMMON):
+            # Пост мог УСПЕТЬ уйти в ленту, а ответ потеряться. Прежде чем винить
+            # клип или смену, спрашиваем сам аккаунт.
+            landed = already_posted(str(row.get("ig_id") or ""), token,
+                                    str(row.get("caption") or ""))
+            if landed:
+                print(f"  …но пост уже в ленте: {landed} — засчитываю", flush=True)
+                fresh[clip] = {"id": landed, "at": stamp,
+                               "account": str(row.get("account") or ""), "platform": "Reels"}
+                _tidy(row, env)
+                break
+            if isinstance(exc, NotTheClip) or any(mark in str(exc).lower() for mark in COMMON):
                 # Клип ни при чём — дальше пойдёт то же самое. Очередь не трогаем.
                 fresh[SHIFT] = {"error": str(exc)[:300], "at": stamp, "clip": clip}
                 break
@@ -135,14 +185,21 @@ def run_once(queue: dict, posted: dict, env: dict) -> dict:
         print(f"✓ {clip} -> Reels {mid}", flush=True)
         fresh[clip] = {"id": mid, "at": stamp, "account": str(row.get("account") or ""),
                        "platform": "Reels"}
-        # Пост уже в ленте. Что бы ни случилось с уборкой дальше, отметка о нём
-        # должна уцелеть: потеряв её, следующая смена зальёт тот же клип второй раз.
-        try:
-            drop_release(str(row.get("tag") or ""), env)
-        except Exception as exc:                            # noqa: BLE001
-            print(f"! уборка раздачи сорвалась: {exc}", flush=True)
+        _tidy(row, env)
         break
     return fresh
+
+
+def _tidy(row: dict, env: dict) -> None:
+    """Убрать раздачу опубликованного клипа.
+
+    Пост уже в ленте. Что бы ни случилось с уборкой дальше, отметка о нём должна
+    уцелеть: потеряв её, следующая смена зальёт тот же клип второй раз.
+    """
+    try:
+        drop_release(str(row.get("tag") or ""), env)
+    except Exception as exc:                                # noqa: BLE001
+        print(f"! уборка раздачи сорвалась: {exc}", flush=True)
 
 
 def drop_release(tag: str, env: dict) -> bool:

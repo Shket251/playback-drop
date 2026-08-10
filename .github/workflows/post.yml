@@ -33,11 +33,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 post.py
 
+      # `if: always()` обязателен. Пост уходит в ленту РАНЬШЕ, чем пишется отметка:
+      # если шаг публикации завершился неудачно уже после успешного поста (или прогон
+      # отменили), без этого условия шаг отметки не выполнится вовсе — клип окажется
+      # в ленте и при этом «неопубликованным», а следующая смена зальёт его повторно.
       - name: Записать отметку домой
+        if: always()
         run: |
           git config user.name "clipper"
           git config user.email "clipper@users.noreply.github.com"
-          git add posted.json queue.json 2>/dev/null || true
+          # Файлы добавляем ПООТДЕЛЬНОСТИ: `git add a b` при отсутствии одного из них
+          # падает целиком и не добавляет НИ ОДНОГО, а `|| true` это прячет — отметка
+          # потерялась бы молча, и прогон остался бы зелёным.
+          for f in posted.json queue.json; do
+            [ -f "$f" ] && git add "$f"
+          done
           if git diff --cached --quiet; then
             echo "менять нечего"
           else

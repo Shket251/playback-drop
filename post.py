@@ -15,6 +15,7 @@
 
   queue.json   что публиковать (пишет домашний ПК)
   posted.json  что уже опубликовано и что упало (пишет эта смена)
+  token.json   ДАТА последнего продления маркера — и только дата
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ import urllib.request
 
 QUEUE = "queue.json"
 POSTED = "posted.json"
+TOKEN_NOTE = "token.json"
 API = "https://graph.instagram.com/v23.0"
 WAIT_TRIES = 20
 WAIT_DELAY = 15.0
@@ -250,11 +252,34 @@ def refresh(token: str) -> tuple[str, int]:
     return fresh, days
 
 
+def _save_note(note: dict) -> None:
+    """Оставить домашнему ПК записку о продлении. ТОЛЬКО дата — репозиторий публичный."""
+    with open(TOKEN_NOTE, "w", encoding="utf-8") as fh:
+        json.dump(note, fh, ensure_ascii=False, indent=1)
+
+
+RENEW_AFTER_DAYS = 30       # маркер живёт 60 дней; продлеваем на половине пути
+
+
+def _age_days(issued: str) -> float:
+    try:
+        return (time.time() - time.mktime(time.strptime(issued, "%Y-%m-%d"))) / 86400
+    except (ValueError, TypeError):
+        return 999.0            # нет даты — считаем, что пора
+
+
 def _refresh_and_store(env: dict) -> int:
     token = env.get("IG_TOKEN") or ""
     if not token:
         print("нечего продлевать: в секретах нет IG_TOKEN")
         return 1
+    # Продлеваем по надобности, а не каждую смену. Дважды в сутки дёргать Instagram
+    # незачем, но главное — иначе дата в записке означала бы «сегодня» всегда, и
+    # домашний ПК считал бы себя отставшим каждый день.
+    was = _age_days(str((_load(TOKEN_NOTE, {}) or {}).get("issued") or ""))
+    if was < RENEW_AFTER_DAYS:
+        print(f"маркер продлевали {was:.0f} дней назад — рано")
+        return 0
     fresh, days = refresh(token)
     print(f"маркер продлён, жив ещё {days} дней")
     repo = env.get("GITHUB_REPOSITORY") or ""
@@ -266,6 +291,12 @@ def _refresh_and_store(env: dict) -> int:
         print(f"! новый маркер не записался в секреты: {(res.stderr or res.stdout)[:200]}")
         return 1
     print("новый маркер записан в секреты репозитория")
+    # Секрет читать нельзя — только записать, поэтому вернуть маркер домой отсюда
+    # невозможно. Зато можно сказать ДАТУ: по ней домашний ПК поймёт, что его
+    # собственный маркер отстал, и продлит свой, пока тот ещё жив. Иначе дома всё
+    # тихо ходит со старым, пока однажды не перестанет — а это отдельная команда,
+    # и заметят её нескоро.
+    _save_note({"issued": time.strftime("%Y-%m-%d"), "by": "cloud", "days_left": days})
     return 0
 
 

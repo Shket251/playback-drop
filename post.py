@@ -29,6 +29,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+try:                                # сосед по репозиторию-раздаче
+    from tg import tell
+except Exception:                   # noqa: BLE001 — рассказ о смене не важнее смены
+    def tell(text: str, env: dict | None = None) -> bool:
+        print(f"! рядом нет tg.py, сообщение не ушло: {text[:80]}", flush=True)
+        return False
+
 QUEUE = "queue.json"
 POSTED = "posted.json"
 TOKEN_NOTE = "token.json"
@@ -185,8 +192,12 @@ def run_once(queue: dict, posted: dict, env: dict) -> dict:
             fresh[clip] = {"error": str(exc)[:300], "at": stamp}
             continue
         print(f"✓ {clip} -> Reels {mid}", flush=True)
-        fresh[clip] = {"id": mid, "at": stamp, "account": str(row.get("account") or ""),
-                       "platform": "Reels"}
+        who = str(row.get("account") or "")
+        # Пост ушёл — об этом надо сказать сразу. Дома об этом узнают только после
+        # `clipper cloud pull`, то есть когда включат компьютер и вспомнят.
+        tell(f"✅ Опубликовано в Reels\n<b>{clip}</b>\nканал: @{who}\n"
+             f"https://instagram.com/{who}", env)
+        fresh[clip] = {"id": mid, "at": stamp, "account": who, "platform": "Reels"}
         _tidy(row, env)
         break
     return fresh

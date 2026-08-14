@@ -64,10 +64,14 @@ def whoami(env: dict | None = None) -> list[str]:
         print("! в секретах репозитория нет TG_BOT_TOKEN", flush=True)
         return []
     try:
+        me = _post(API.format(token=token, method="getMe"), {}, TIMEOUT)
         out = _post(API.format(token=token, method="getUpdates"), {}, TIMEOUT)
     except Exception as exc:                                # noqa: BLE001
         print(f"! телеграм не ответил: {type(exc).__name__}: {exc}", flush=True)
         return []
+    # Кто мы такие. Без этого совет «напиши боту /start» некому выполнить: имя бота
+    # знает только сам телеграм, из токена его не достать.
+    print(f"Бот: @{(me.get('result') or {}).get('username') or '?'}", flush=True)
     seen: list[str] = []
     for upd in out.get("result") or []:
         msg = upd.get("message") or upd.get("channel_post") or {}

@@ -1,0 +1,42 @@
+# Сказать в телеграм за домашний ПК.
+#
+# api.telegram.org не открывается ни с домашнего интернета, ни с нашего VPS — оба в
+# России, соединение виснет до таймаута. Раннеры GitHub за границей, поэтому просьба
+# «скажи вот это» едет сюда событием, а бот говорит уже отсюда.
+#
+# Событие шлёт `clipper/tg.py` (нужен .env: TG_NOTIFY=1). Руками — кнопкой на вкладке
+# Actions; `--whoami` в поле текста покажет номера чатов, которые писали боту.
+#
+# Файл кладёт сюда `clipper cloud setup` — править надо в E:\Whop\cloud\notify.yml.
+name: Сказать в телеграм
+
+on:
+  repository_dispatch:
+    types: [notify]
+  workflow_dispatch:
+    inputs:
+      text:
+        description: 'Что сказать (или --whoami, чтобы узнать номер чата)'
+        required: false
+        default: 'проверка связи'
+
+jobs:
+  say:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Отправить
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # Текст приходит либо из события (постинг), либо из кнопки (руками).
+          # Через переменную окружения, а не подстановкой в команду: текст пишет
+          # модель, и кавычка в нём иначе ломала бы всю строку запуска.
+          TEXT: ${{ github.event.client_payload.text || inputs.text }}
+        run: |
+          if [ "$TEXT" = "--whoami" ]; then
+            python3 tg.py --whoami
+          else
+            python3 tg.py "$TEXT"
+          fi

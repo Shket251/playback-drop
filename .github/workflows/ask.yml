@@ -1,0 +1,57 @@
+# Спросить человека кнопкой в телеграме и дождаться ответа.
+#
+# Домашний ПК спросить не может: до api.telegram.org из России связи нет (см. tg.py).
+# Поэтому он присылает сюда событие `ask`, раннер показывает клип с кнопками и висит,
+# пока не нажмут. Ответ раннер кладёт коммитом в `asks/<id>.json` — обратно домой
+# другого пути нет, наружу ПК никого не слушает.
+#
+# Событие шлёт `clipper/ask.py`. Файл кладёт сюда `clipper cloud setup` — править
+# надо в E:\Whop\cloud\ask.yml.
+name: Спросить в телеграме
+
+on:
+  repository_dispatch:
+    types: [ask]
+
+permissions:
+  contents: write             # ответ возвращается коммитом в этот же репозиторий
+
+# Не cancel-in-progress: два вопроса разом воруют друг у друга нажатия (getUpdates
+# отдаёт очередь один раз), поэтому второй ждёт своей очереди, а не убивает первый.
+concurrency: ask
+
+jobs:
+  ask:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75       # заведомо больше самого долгого срока подтверждения
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Показать и дождаться
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # Через окружение, а не подстановкой в команду: текст пишет модель, и
+          # кавычка в нём иначе разломала бы саму строку запуска.
+          ASK_ID: ${{ github.event.client_payload.id }}
+          ASK_VIDEO: ${{ github.event.client_payload.video }}
+          ASK_TEXT: ${{ github.event.client_payload.text }}
+          ASK_MINUTES: ${{ github.event.client_payload.minutes }}
+        run: |
+          python3 ask.py --id "$ASK_ID" --video "$ASK_VIDEO" \
+                         --text "$ASK_TEXT" --minutes "${ASK_MINUTES:-30}"
+
+      # `if: always()`: молчание — тоже ответ, и дома его ждут. Без этого шага ПК
+      # висел бы весь срок и получил бы «нет ответа» вместо честного «не нажали».
+      - name: Вернуть ответ домой
+        if: always()
+        run: |
+          git config user.name "clipper"
+          git config user.email "clipper@users.noreply.github.com"
+          git add asks || true
+          if git diff --cached --quiet; then
+            echo "ответа нет — писать нечего"
+          else
+            git commit -m "ответ на вопрос о публикации"
+            git pull --rebase --autostash && git push
+          fi

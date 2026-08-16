@@ -1,0 +1,57 @@
+# Смена по кнопке: спросить в телеграме и опубликовать разрешённое.
+#
+# Обычная смена (post.yml) клипы заказов не берёт вовсе — они выходят только с
+# разрешения человека. Эта смена и есть способ дать разрешение, не включая ПК:
+# она показывает клип в телефоне, ждёт нажатия и публикует то, что разрешили.
+#
+# Час выбран под человека, а не под алгоритм: 16:00 UTC — это 19:00 по Москве,
+# время, когда есть кому посмотреть и нажать. Не нажали — не уехало ничего, и
+# очередь осталась нетронутой: клип дождётся завтрашней смены.
+#
+# Файл кладёт сюда `clipper cloud setup` — править надо в E:\Whop\cloud\askpost.yml.
+name: Смена по кнопке
+
+on:
+  schedule:
+    - cron: '0 16 * * *'
+  workflow_dispatch:          # кнопка «спросить сейчас» на вкладке Actions
+
+permissions:
+  contents: write
+
+# Группа общая с ask.yml, а не с обычной сменой: два ожидания нажатия разом
+# воруют друг у друга ответы (getUpdates отдаёт очередь ровно один раз).
+concurrency: ask
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Спросить и опубликовать
+        env:
+          IG_TOKEN: ${{ secrets.IG_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python3 post.py --ask
+
+      # То же условие и по той же причине, что в post.yml: пост уходит в ленту
+      # РАНЬШЕ, чем пишется отметка. Без `always()` клип оказался бы в ленте и при
+      # этом «неопубликованным» — и уехал бы повторно.
+      - name: Записать отметку домой
+        if: always()
+        run: |
+          git config user.name "clipper"
+          git config user.email "clipper@users.noreply.github.com"
+          for f in posted.json queue.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          if git diff --cached --quiet; then
+            echo "менять нечего"
+          else
+            git commit -m "смена по кнопке: отметки о публикации"
+            git pull --rebase --autostash && git push
+          fi

@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -43,6 +44,7 @@ API = "https://graph.instagram.com/v23.0"
 WAIT_TRIES = 20
 WAIT_DELAY = 15.0
 TRIES = 3           # столько клипов подряд пробуем, если верхние падают
+ASK_MINUTES = 45    # столько ждём нажатия: смена идёт по расписанию, человек не ждёт её
 SHIFT = "!смена"    # ключ для беды, которая не про клип (именем файла быть не может)
 
 # Беды, в которых клип не виноват: маркер, права, блокировка приложения, лимиты.
@@ -138,32 +140,79 @@ def already_posted(ig_id: str, token: str, caption: str) -> str:
     return ""
 
 
-def next_up(queue: dict, posted: dict) -> tuple[dict | None, int]:
+def next_up(queue: dict, posted: dict, *, ask: bool = False) -> tuple[dict | None, int]:
     """Первый клип очереди, с которым ещё ничего не случилось.
 
     Упавший считается отработанным: иначе один битый файл затыкает очередь
     навсегда, и канал молчит, пока никто не заметит.
+
+    Очередей на самом деле две в одной. Клип заказа выходит только с разрешения
+    человека, и обычная ночная смена не должна взять его НИКОГДА — а смена по
+    кнопке не должна брать ничего, кроме таких. Отсюда разделение по метке.
     """
     for i, row in enumerate(queue.get("posts") or []):
+        if bool(row.get("ask")) != ask:
+            continue
         if str(row.get("clip") or "") not in posted:
             return row, i
     return None, -1
 
 
-def run_once(queue: dict, posted: dict, env: dict) -> dict:
+def allowed(row: dict, env: dict, clip: str) -> tuple[bool, str]:
+    """Спросить человека кнопкой. Возвращает (разрешено, почему нет).
+
+    Пустая причина при отказе — это «нажали „мимо“»: решение принято, клип надо
+    вычеркнуть. Непустая — «спросить не вышло или не ответили»: очередь целая,
+    клип дождётся следующей смены.
+    """
+    from ask import show, wait                              # сосед по репозиторию-раздаче
+
+    token = str(env.get("TG_BOT_TOKEN") or "")
+    chat = str(env.get("TG_CHAT_ID") or "")
+    if not token or not chat:
+        return False, "в секретах репозитория нет TG_BOT_TOKEN/TG_CHAT_ID — спросить нечем"
+    key = hashlib.sha1(clip.encode("utf-8")).hexdigest()[:10]
+    text = (f"Публикуем в Reels на @{row.get('account')}?\n\n"
+            f"<b>{clip}</b>\n\n{str(row.get('caption') or '')[:700]}")
+    if not show(str(row.get("url") or ""), text, key, token, chat):
+        return False, "вопрос не дошёл до телеграма"
+    got = wait(key, token, chat, float(env.get("ASK_MINUTES") or ASK_MINUTES))
+    if got.get("ok"):
+        return True, ""
+    return False, str(got.get("why") or "")
+
+
+def run_once(queue: dict, posted: dict, env: dict, *, ask: bool = False) -> dict:
     """Опубликовать ОДИН клип. Возвращает только новые записи для posted.json.
 
     Один за смену — не жадность, а ритм: два поста в один час алгоритм читает
     как спам. Но если верхний клип падает, пробуем следующий: смена не должна
     пропадать впустую из-за одного плохого файла.
+
+    С `ask` смена сначала показывает клип в телеграме и ждёт нажатия. Это и есть
+    способ выпустить клип заказа при выключенном компьютере: решает по-прежнему
+    человек, просто спрашивает его тот, кто дотягивается до телеграма.
     """
     fresh: dict = {}
     for _ in range(TRIES):
-        row, _i = next_up(queue, {**posted, **fresh})
+        row, _i = next_up(queue, {**posted, **fresh}, ask=ask)
         if row is None:
             break
         clip = str(row.get("clip") or "?")
         stamp = time.strftime("%Y-%m-%d %H:%M", time.gmtime())
+        if ask:
+            ok, why = allowed(row, env, clip)
+            if not ok and why:
+                # Не ответили или спрашивать нечем. Очередь не трогаем: клип живой,
+                # просто сегодня его никто не выпустил.
+                print(f"— {clip}: {why}", flush=True)
+                fresh[SHIFT] = {"error": why, "at": stamp, "clip": clip}
+                break
+            if not ok:
+                print(f"× {clip}: «мимо» — вычёркиваю", flush=True)
+                fresh[clip] = {"skipped": True, "at": stamp}
+                _tidy(row, env)
+                break
         token = env.get(str(row.get("token_secret") or "IG_TOKEN") or "IG_TOKEN")
         if not token:
             # Тоже беда не про клип: следующий упрётся в ровно то же самое.
@@ -324,12 +373,13 @@ def _load(name: str, default):
 def main() -> int:
     if "--refresh" in sys.argv[1:]:
         return _refresh_and_store(dict(os.environ))
+    ask = "--ask" in sys.argv[1:]
     queue = _load(QUEUE, {})
     posted = _load(POSTED, {})
     if not (queue.get("posts") or []):
         print("Очередь пуста — публиковать нечего.")
         return 0
-    fresh = run_once(queue, posted, dict(os.environ))
+    fresh = run_once(queue, posted, dict(os.environ), ask=ask)
     if not fresh:
         print("Всё из очереди уже отработано.")
         return 0

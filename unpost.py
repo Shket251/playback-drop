@@ -44,6 +44,23 @@ def unpost(media_id: str, token: str) -> None:
         raise RuntimeError(f"отказ без объяснения: {body}")
 
 
+def permalink(media_id: str, token: str) -> str:
+    """Ссылка на пост. Нужна ровно тогда, когда снять не вышло.
+
+    Маркер, выданный по входу через Instagram, удалять посты не умеет: Meta даёт
+    `instagram_manage_contents` только токенам с Facebook-логином, и на DELETE
+    отвечает «Unsupported delete request». Значит человек пойдёт снимать руками,
+    и единственное, чем ему тут можно помочь, — дать прямую ссылку.
+    """
+    url = f"{API}/{media_id}?" + urllib.parse.urlencode(
+        {"fields": "permalink,caption", "access_token": token})
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            return str(json.loads(resp.read().decode("utf-8") or "{}").get("permalink") or "")
+    except (urllib.error.URLError, OSError):
+        return ""
+
+
 def main() -> int:
     token = os.environ.get("IG_TOKEN", "").strip()
     if not token:
@@ -59,7 +76,10 @@ def main() -> int:
             unpost(media_id, token)
         except RuntimeError as exc:
             bad += 1
+            link = permalink(media_id, token)
             print(f"✗ {media_id}: {exc}")
+            if link:
+                print(f"   снять руками: {link}")
         else:
             print(f"✓ {media_id}: снят")
     print(f"снято: {len(ids) - bad} из {len(ids)}")

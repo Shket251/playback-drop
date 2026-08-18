@@ -1,0 +1,23 @@
+# Снять пост из ленты. Только по кнопке и только руками.
+#
+# Расписания здесь нет намеренно: удаление необратимо, и запускать его сам никто
+# не должен. Ставится тем же `clipper cloud setup` — править в E:\Whop\cloud\unpost.yml.
+name: Снять пост
+
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "id постов через пробел или запятую"
+        required: true
+
+jobs:
+  unpost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Снять
+        env:
+          IG_TOKEN: ${{ secrets.IG_TOKEN }}
+        run: python3 unpost.py "${{ inputs.ids }}"

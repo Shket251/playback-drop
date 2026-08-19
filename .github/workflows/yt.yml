@@ -64,7 +64,7 @@ jobs:
         run: |
           git config user.name "clipper"
           git config user.email "clipper@users.noreply.github.com"
-          for f in posted.json queue.json; do
+          for f in posted_yt.json queue.json; do
             [ -f "$f" ] && git add "$f"
           done
           if git diff --cached --quiet; then

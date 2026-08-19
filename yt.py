@@ -41,7 +41,10 @@ except Exception:                   # noqa: BLE001 — рассказ о сме�
         return False
 
 QUEUE = "queue.json"
-POSTED = "posted.json"
+# Свой файл отметок, НЕ общий с Instagram. Смена Reels пропускает всё, что лежит в её
+# posted.json, — сложи мы отметки YouTube туда же, и клип, уехавший на Shorts, молча
+# выпал бы из Reels. Площадки независимы: один клип уходит в обе ленты.
+POSTED = "posted_yt.json"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = ("https://www.googleapis.com/upload/youtube/v3/videos"
               "?uploadType=resumable&part=snippet,status")

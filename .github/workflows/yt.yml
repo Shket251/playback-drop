@@ -44,8 +44,16 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           # По секрету на канал. Имя = YT_REFRESH_ + имя канала заглавными, всё
           # кроме букв и цифр заменено на подчёркивание (см. yt.py: secret_name).
+          #
+          # Новый канал НУЖНО дописать сюда руками — GitHub не отдаёт секреты
+          # списком. Пока @sholap5 тут не было, живой фортнайтовый канал (36 тыс
+          # просмотров) не получал из облака ничего, и выглядело это как «нечего
+          # постить». Теперь смена про такой канал ещё и говорит вслух.
           YT_REFRESH_PLAYBACK: ${{ secrets.YT_REFRESH_PLAYBACK }}
           YT_REFRESH_CARDCHAOS_Z6S: ${{ secrets.YT_REFRESH_CARDCHAOS_Z6S }}
+          YT_REFRESH_SHOLAP5: ${{ secrets.YT_REFRESH_SHOLAP5 }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 yt.py
 

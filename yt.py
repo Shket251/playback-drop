@@ -83,6 +83,33 @@ def _post(url: str, data: bytes, headers: dict, method: str = "POST") -> bytes:
         return r.read()
 
 
+def why(exc: Exception) -> str:
+    """Человеческая причина отказа, а не «HTTP Error 400: Bad Request».
+
+    У HTTPError весь смысл лежит в теле ответа, а в тексте исключения его нет.
+    Ровно поэтому шесть подряд сорванных смен выглядели одинаково безлико, и по
+    логу нельзя было отличить «ключ протух» от «ролик слишком длинный».
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = exc.read().decode("utf-8", "replace")
+        except Exception:                   # noqa: BLE001
+            body = ""
+        return f"HTTP {exc.code}: {body[:300] or exc.reason}"
+    return str(exc)
+
+
+def done(rec) -> bool:
+    """Уехал ли клип на самом деле. Отметка без id — это отчёт о СБОЕ.
+
+    Различие не косметическое. Очередь пропускает всё, что есть в отметках, и
+    пустая отметка `{}` после сбоя означала «считаем опубликованным»: клип не
+    возвращался ни в одну смену и ни в одно сообщение. Так с 20 по 25 августа
+    молча сгорели шесть роликов, а канал @cardchaos-z6s встал совсем.
+    """
+    return bool(isinstance(rec, dict) and rec.get("id"))
+
+
 def access_token(channel: str, env: dict) -> str:
     """Обменять долгий ключ канала на короткий пропуск."""
     refresh = env.get(secret_name(channel), "")
@@ -161,19 +188,34 @@ def main() -> int:
     env = dict(os.environ)
     queue = _read(QUEUE, {"posts": []}) or {"posts": []}
     posted = _read(POSTED, {}) or {}
-    rows = [p for p in (queue.get("posts") or [])
-            if str(p.get("platform") or "") == "youtube"
-            and str(p.get("clip") or "") not in posted]
+    mine = [p for p in (queue.get("posts") or [])
+            if str(p.get("platform") or "") == "youtube"]
+    rows = [p for p in mine if not done(posted.get(str(p.get("clip") or "")))]
+    # Сдавшиеся показываем отдельной строкой. Молча они уже полежали неделю.
+    stuck = [p for p in rows
+             if int((posted.get(str(p.get("clip") or "")) or {}).get("tries") or 0) >= TRIES]
+    if stuck:
+        print(f"YouTube: {len(stuck)} роликов сдались после {TRIES} попыток "
+              f"и ждут дома: {', '.join(str(p.get('clip')) for p in stuck[:5])}", flush=True)
+    rows = [p for p in rows if p not in stuck]
     if not rows:
         print("YouTube: очередь пуста", flush=True)
         return 0
 
     # По одному ролику на канал за смену — ритм задаёт расписание, а не размер пачки.
-    done = 0
+    sent = 0
     for channel in dict.fromkeys(str(p.get("channel") or "") for p in rows):
-        why = may_post(posted, channel)
-        if why:
-            print(f"YouTube: @{channel} пропускает эту смену — {why}", flush=True)
+        # Нет ключа — виноват не клип, а настройка. Попытки на это не тратим, иначе
+        # неподключённый канал за три смены съел бы три своих ролика.
+        if not env.get(secret_name(channel)):
+            print(f"! @{channel} не подключён к облаку: нет секрета "
+                  f"{secret_name(channel)} — канал стоит", flush=True)
+            tell(f"⚠️ YouTube @{channel} не подключён к облаку: "
+                 f"нет секрета {secret_name(channel)}")
+            continue
+        hold = may_post(posted, channel)
+        if hold:
+            print(f"YouTube: @{channel} пропускает эту смену — {hold}", flush=True)
             continue
         row = next(p for p in rows if str(p.get("channel") or "") == channel)
         clip = str(row.get("clip") or "")
@@ -182,21 +224,27 @@ def main() -> int:
             vid = upload(token, fetch(str(row.get("url") or "")),
                          str(row.get("title") or clip), str(row.get("caption") or ""))
         except Exception as exc:                        # noqa: BLE001
-            tries = int(row.get("tries") or 0) + 1
-            print(f"! {clip} -> @{channel}: {exc}", flush=True)
-            posted[clip] = {"channel": channel, "error": str(exc)[:300], "tries": tries,
-                            "at_epoch": 0.0} if tries >= TRIES else posted.get(clip, {})
+            # Счётчик попыток живёт в отметках, а не в строке очереди: очередь эта
+            # смена не переписывает, и `row["tries"]` навсегда оставался нулём —
+            # значит и предупреждение о трёх неудачах не приходило никогда.
+            was = posted.get(clip) or {}
+            tries = int(was.get("tries") or 0) + 1
+            reason = why(exc)
+            print(f"! {clip} -> @{channel} (попытка {tries} из {TRIES}): {reason}",
+                  flush=True)
+            posted[clip] = {"channel": channel, "error": reason[:300], "tries": tries,
+                            "at_epoch": 0.0}
             if tries >= TRIES:
-                tell(f"⚠️ YouTube: {clip} не уехал {TRIES} раза подряд — {str(exc)[:120]}")
+                tell(f"⚠️ YouTube: {clip} не уехал {TRIES} раза подряд — {reason[:160]}")
             continue
         posted[clip] = {"channel": channel, "id": vid, "at_epoch": time.time(),
                         "at": time.strftime("%Y-%m-%d %H:%M", time.gmtime())}
         print(f"✓ {clip} -> @{channel} https://youtube.com/shorts/{vid}", flush=True)
         tell(f"✅ YouTube @{channel}\n{row.get('title') or clip}\n"
              f"https://youtube.com/shorts/{vid}")
-        done += 1
+        sent += 1
     _write(POSTED, posted)
-    print(f"YouTube: за эту смену уехало {done}", flush=True)
+    print(f"YouTube: за эту смену уехало {sent}", flush=True)
     return 0
 
 

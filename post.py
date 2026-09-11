@@ -151,6 +151,13 @@ def next_up(queue: dict, posted: dict, *, ask: bool = False) -> tuple[dict | Non
     кнопке не должна брать ничего, кроме таких. Отсюда разделение по метке.
     """
     for i, row in enumerate(queue.get("posts") or []):
+        # Очередь ОБЩАЯ на все площадки, и площадку надо спрашивать. Без этой
+        # строки смена Reels брала ютубовские строки: `ig_id` у них нет, адрес
+        # собирался как «/v21.0//media», и Instagram отвечал «Object with ID
+        # 'media' does not exist». Смена честно рапортовала «встала», очередь не
+        # трогала — и Reels молчали с 16.08 по 10.09.2026, почти месяц.
+        if str(row.get("platform") or "") == "youtube":
+            continue
         if bool(row.get("ask")) != ask:
             continue
         if str(row.get("clip") or "") not in posted:
